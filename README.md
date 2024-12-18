@@ -30,11 +30,10 @@ from .f5tts.model import F5TTS
 ```
 'F5TTS': F5TTS  
 ```
-```
-cd example/f5tts  
-```
+
 ## 1.convert_checkpoint
 ```
+cd example/f5tts
 python convert_checkpoint.py
 ```
 ## 2.build engine(支持Tensor 并行, --tp_size)
