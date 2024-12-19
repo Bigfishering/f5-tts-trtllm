@@ -42,6 +42,7 @@ python convert_checkpoint.py
 ## 2.build engine(支持Tensor 并行, --tp_size)
 ```
 trtllm-build --checkpoint_dir ./tllm_checkpoint/ --remove_input_padding disable --bert_attention_plugin disable
+如报参数dtype不一致错误，那是因为我们默认参数是fp16，而网络参数默认需要fp32，需要在tensorrt_llm/parameter.py中将参数默认_DEFAULT_DTYPE = trt.DataType.HALF
 ```
 ## 3.inference
 ```
