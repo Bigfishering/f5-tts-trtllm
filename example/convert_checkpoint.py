@@ -242,7 +242,11 @@ def convert_timm_dit(args, mapping, dtype='float32'):
 
     weights = dict()
     for name, param in model_params.items():
-        weights[get_trtllm_name(name)] = param.contiguous().to(torch_dtype)
+        if name == 'input_embed.conv_pos_embed.conv1d.0.weight' or \
+            name == 'input_embed.conv_pos_embed.conv1d.2.weight':
+            weights[get_trtllm_name(name)] = param.contiguous().to(torch_dtype).unsqueeze(-1)
+        else:
+            weights[get_trtllm_name(name)] = param.contiguous().to(torch_dtype)
 
     assert len(weights) == len(model_params)
 
