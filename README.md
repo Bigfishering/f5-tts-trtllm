@@ -1,7 +1,20 @@
 # F5TTS-TensorRT-LLM
 ### 截止2024/12/19, 更新了module.py，增加了缺失的rotate_every_two_3dim函数。
 #### 该项目主要受https://github.com/DakeQQ/F5-TTS-ONNX 启发，前处理和后处理由于耗时较低并没有进行优化，都用的onnx方案。而backbone部分主要是onnx版的trtllm实现，重写了网络，重写一些trtllm不支持的算子和操作。最终推理性能提高了4倍左右。
-#### 需要安装配置好tensorrt-llm环境（推荐docker方式搭建环境）
+#### 需要安装配置好tensorrt-llm环境
+####（推荐docker方式搭建环境，docker image:nvcr.io/nvidia/pytorch:23.10-py3）
+```
+进入容器后
+# 卸载TensorRT  
+pip uninstall -y tensorrt  
+pip uninstall -y torch-tensorrt  
+  
+pip install mpi4py 
+pip install polygraphy
+
+# 重新安装TensorRT
+tensorrt：10.6.0
+```
 目录中model和example分别对应Tensorrt-LLM源码中的tensorrt_llm/models和example。
 
 在Tensorrt-LLM源码中的tensorrt_llm/models和example目录下分别新建f5tts/ 目录，然后将repo中的代码放入对应的目录。  
