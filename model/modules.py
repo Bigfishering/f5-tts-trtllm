@@ -235,28 +235,28 @@ class Attention(Module):
             return self.processor(self, x, rope_cos=rope_cos, rope_sin=rope_sin, mask=mask, scale=scale)
           
 def rotate_every_two_3dim(tensor: Tensor) -> Tensor:
-        assert tensor.ndim() == 3
-        
-        shape_tensor = concat([
-            shape(tensor, i) / 2 if i == (tensor.ndim() -
-                                          1) else shape(tensor, i)
-            for i in range(tensor.ndim())
-        ])
-        x1 = slice(tensor, [0, 0,  0], shape_tensor, [1, 1, 2])
-        x2 = slice(tensor, [0, 0,  1], shape_tensor, [1, 1, 2])
-        x1 = expand_dims(x1, 3)
-        x2 = expand_dims(x2, 3)
-        zero = constant(
-            np.ascontiguousarray(
-                np.zeros([1], dtype=trt_dtype_to_np(tensor.dtype))))
-        x2 = zero - x2
-        x = concat([x2, x1], 3)
-        out =  view(
-            x, concat([shape(x, 0),
-                       shape(x, 1),
-                       shape(x, 2)*2]))
+    assert tensor.ndim() == 3
+    
+    shape_tensor = concat([
+        shape(tensor, i) / 2 if i == (tensor.ndim() -
+                                      1) else shape(tensor, i)
+        for i in range(tensor.ndim())
+    ])
+    x1 = slice(tensor, [0, 0,  0], shape_tensor, [1, 1, 2])
+    x2 = slice(tensor, [0, 0,  1], shape_tensor, [1, 1, 2])
+    x1 = expand_dims(x1, 3)
+    x2 = expand_dims(x2, 3)
+    zero = constant(
+        np.ascontiguousarray(
+            np.zeros([1], dtype=trt_dtype_to_np(tensor.dtype))))
+    x2 = zero - x2
+    x = concat([x2, x1], 3)
+    out =  view(
+        x, concat([shape(x, 0),
+                   shape(x, 1),
+                   shape(x, 2)*2]))
 
-        return out
+    return out
   
 def apply_rotary_pos_emb_3dim(x, rope_cos, rope_sin):
     rot_dim = shape(rope_cos, 2) #64
