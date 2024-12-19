@@ -265,7 +265,7 @@ def apply_rotary_pos_emb_3dim(x, rope_cos, rope_sin):
     end_dim = shape(x, 2) - shape(rope_cos, 2)
     new_t_unrotated_shape = concat([shape(x, 0), shape(x, 1), end_dim]) # (2, -1, 960)
     x_unrotated = slice(x, concat([0, 0, rot_dim]), new_t_unrotated_shape, [1, 1, 1])
-    out = concat([x_ * rope_cos + RopeEmbeddingUtils.rotate_every_two_3dim(x_) * rope_sin, x_unrotated], dim = -1)
+    out = concat([x_ * rope_cos + rotate_every_two_3dim(x_) * rope_sin, x_unrotated], dim = -1)
     # t -> (2,-1,1024)   freqs -> (-1,64)
     return out
   
