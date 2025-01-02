@@ -13,7 +13,7 @@ import tensorrt as trt
 from ..._utils import (fp32_array, int32_array, is_same_dtype, set_obj_attrs,
                       trt_dtype_to_np, trt_dtype_to_str,str_dtype_to_trt)
 from ...functional import (Tensor, allgather, arange, chunk, concat, constant,
-                           cos, exp, expand, shape, silu, sin, slice, split, permute,
+                           cos, exp, expand, shape, silu, sin, slice, split, permute, expand_dims, view,
                            unsqueeze, matmul, softmax, where, RopeEmbeddingUtils, minimum, repeat_interleave, squeeze, cast, gelu)
 from ...layers import MLP, BertAttention, Conv2d, LayerNorm, Linear, Conv1d, Mish, embedding, RowLinear, ColumnLinear
 from ...module import Module, ModuleList
