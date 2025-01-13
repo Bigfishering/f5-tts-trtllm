@@ -14,6 +14,7 @@ from tensorrt_llm.logger import logger
 from tensorrt_llm.plugin.plugin import CustomAllReduceHelper
 from tensorrt_llm.runtime.session import Session, TensorInfo
 from .STFT_Procrss import STFT_Process
+from vocos import Vocos
 
 import re
 import sys
@@ -23,20 +24,36 @@ import onnxruntime
 import torchaudio
 from pypinyin import lazy_pinyin, Style
 import math
-from x_transformers.x_transformers import RotaryEmbedding
 
 onnx_model_A         = "./F5_Preprocess.onnx"                        # The exported onnx model path.
 onnx_model_C         = "./F5_Decode.onnx"                            # The exported onnx model path.
 
 ORT_Accelerate_Providers = []           # If you have accelerate devices for : ['CUDAExecutionProvider', 'TensorrtExecutionProvider', 'CoreMLExecutionProvider', 'DmlExecutionProvider', 'OpenVINOExecutionProvider', 'ROCMExecutionProvider', 'MIGraphXExecutionProvider', 'AzureExecutionProvider']
                                         # else keep empty.
+DYNAMIC_AXES = True                     # Default dynamic_axes is input audio length. Note, some providers only work for static axes.
+N_MELS = 100                            # Number of Mel bands to generate in the Mel-spectrogram
+NFFT = 1024                             # Number of FFT components for the STFT process
 HOP_LENGTH = 256                        # Number of samples between successive frames in the STFT
+MAX_SIGNAL_LENGTH = 2048                # Max frames for audio length after STFT processed
 SAMPLE_RATE = 24000                     # The generated audio sample rate
 RANDOM_SEED = 9527                      # Set seed to reproduce the generated audio
 NFE_STEP = 32                           # F5-TTS model setting
+CFG_STRENGTH = 2.0                      # F5-TTS model setting
+SWAY_COEFFICIENT = -1.0                 # F5-TTS model setting
+HIDDEN_SIZE = 1024                      # F5-TTS model setting
 SPEED = 1.0                             # Set for talking speed. Only works with dynamic_axes=True
-
-
+TARGET_RMS = 0.15                       # The root mean square value for the audio
+HEAD_DIM = 64                           # F5-TTS Transformers model head_dim
+AUDIO_LENGTH = 160000                   # Set for static axes export. Length of audio input signal in samples
+TEXT_IDS_LENGTH = 60                    # Set for static axes export. Text_ids from [ref_text + gen_text]
+MAX_GENERATED_LENGTH = 600              # Set for static axes export. Max signal features before passing to ISTFT
+TEXT_EMBED_LENGTH = 512 + N_MELS        # Set for static axes export.
+WINDOW_TYPE = 'kaiser'                  # Type of window function used in the STFT
+REFERENCE_SIGNAL_LENGTH = AUDIO_LENGTH // HOP_LENGTH + 1  # Reference audio length after STFT processed
+MAX_DURATION = REFERENCE_SIGNAL_LENGTH + MAX_GENERATED_LENGTH  # Set for static axes export. MAX_DURATION <= MAX_SIGNAL_LENGTH
+if MAX_DURATION > MAX_SIGNAL_LENGTH:
+    MAX_DURATION = MAX_SIGNAL_LENGTH
+  
 with open("./vocab.txt", "r", encoding="utf-8") as f:
     vocab_char_map = {}
     for i, char in enumerate(f):
@@ -110,8 +127,15 @@ def CUASSERT(cuda_ret):
         return cuda_ret[1:]
     return None
 
-def get_input(reference_audio, ref_text, gen_text):                                                        # The target TTS.
-    audio, sr = torchaudio.load(reference_audio)
+def init_encoder_decoder(args):
+    f5_model = load_model(args.f5tts_model)
+    custom_stft = STFT_Process(model_type='stft_A', n_fft=NFFT, n_mels=N_MELS, hop_len=HOP_LENGTH, max_frames=MAX_SIGNAL_LENGTH, window_type=WINDOW_TYPE).eval()
+    f5_preprocess = F5Preprocess(f5_model, custom_stft)
+    vocos = Vocos.from_pretrained(args.vocos_model)
+  
+def get_input(args):                                                        # The target TTS.
+    audio, sr = torchaudio.load(args.reference_audio)
+    ref_text, gen_text = args.ref_text, args.gen_text
     if sr != SAMPLE_RATE:
         resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=SAMPLE_RATE)
         audio = resampler(audio)
@@ -130,17 +154,7 @@ def get_input(reference_audio, ref_text, gen_text):                             
 
 def preprocess(audio, text_ids, max_duration):
     print("\n\nRun F5-TTS preprocess.")
-    # noise, rope_cos, rope_sin, cat_mel_text, cat_mel_text_drop, qk_rotated_empty, ref_signal_len = ort_session_A.run(
-    #         [out_name_A0, out_name_A1, out_name_A2, out_name_A3, out_name_A4, out_name_A5, out_name_A6],
-    #         {
-    #             in_name_A0: audio,
-    #             in_name_A1: text_ids,
-    #             in_name_A2: max_duration
-    #         })
     with torch.inference_mode():
-      f5_model = load_model(F5_safetensors_path)
-      custom_stft = STFT_Process(model_type='stft_A', n_fft=NFFT, n_mels=N_MELS, hop_len=HOP_LENGTH, max_frames=MAX_SIGNAL_LENGTH, window_type=WINDOW_TYPE).eval()
-      f5_preprocess = F5Preprocess(f5_model, custom_stft)
       noise, rope_cos, rope_sin, cat_mel_text, cat_mel_text_drop, qk_rotated_empty, ref_signal_len = f5_preprocess(torch.from_numpy(noise),
                                                                                                                   torch.from_numpy(text_ids),
                                                                                                                   torch.from_numpy(max_duration))
@@ -317,13 +331,13 @@ class F5TTS(object):
             i += 1
         return self.outputs["denoised"]
 
-def decode(noise, ref_signal_len, audio_save_path = './gen.wav'):
+def decode(args, noise, ref_signal_len):
     denoised = noise[:, ref_signal_len:, :].transpose(1, 2)
     denoised = vocos.decode(denoised)
-    generated_signal = denoised * self.target_rms / torch.sqrt(torch.mean(torch.square(denoised)))
+    generated_signal = denoised * TARGET_RMS / torch.sqrt(torch.mean(torch.square(denoised)))
     # Save to audio
     audio_tensor = torch.tensor(generated_signal, dtype=torch.float32).squeeze(0)
-    torchaudio.save(audio_save_path, audio_tensor, SAMPLE_RATE)
+    torchaudio.save(args.output_dir, audio_tensor, SAMPLE_RATE)
 
 def main(args):
     tensorrt_llm.logger.set_level(args.log_level)
@@ -336,10 +350,7 @@ def main(args):
         config = json.load(f)
     model = F5TTS(config, debug_mode=args.debug_mode)
     #------------------------get input-------------------------#
-    reference_audio      = "./basic_ref_zh.wav"     # The reference audio path.
-    ref_text             = "对，这就是我，万人敬仰的太乙真人。" # The ASR result of reference audio.
-    gen_text             = "对，这就是我，万人敬仰的超级玛丽"  
-    audio, text_ids, max_duration = get_input(reference_audio, ref_text, gen_text)
+    audio, text_ids, max_duration = get_input(args)
     #------------------------preprocess-------------------------#
     preprocess_time = timm.time()
     noise, cond, cond_drop, time_expand, rope_cos, rope_sin, delta_t, ref_signal_len= preprocess(audio, text_ids, max_duration)
@@ -351,16 +362,22 @@ def main(args):
     # model forward
     denoised = model.forward(noise.cuda(), cond.cuda(), cond_drop.cuda(), time_expand.cuda(), rope_cos.cuda(), rope_sin.cuda(),  delta_t.cuda())
     # decode with vocos
-    decode(denoised.cpu().numpy().astype(np.float32), ref_signal_len)
+    decode(args, denoised.cpu().numpy().astype(np.float32), ref_signal_len)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--f5tts_model", type=str, default='')
+    parser.add_argument("--vocos_model", type=str, default='')
+    parser.add_argument("--reference_audio", type=str, default='./basic_ref_zh.wav')
+    parser.add_argument("--ref_text", type=str, default='对，这就是我，万人敬仰的太乙真人。')
+    parser.add_argument("--gen_text", type=str, default='对，这就是我，万人敬仰的超级玛丽。')
+    parser.add_argument("--output_dir", type=str, default='./gen.wav')
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tllm_model_dir",
                         type=str,
                         default='./engine_outputs/')
     parser.add_argument("--gpus_per_node", type=int, default=8)
     parser.add_argument('--log_level', type=str, default='info')
-    parser.add_argument("--debug_mode", type=bool, default=True)
+    parser.add_argument("--debug_mode", type=bool, default=True)    
     args = parser.parse_args()
     main(args)
