@@ -109,41 +109,6 @@ def CUASSERT(cuda_ret):
         return cuda_ret[1:]
     return None
 
-# ONNX Runtime settings
-onnxruntime.set_seed(RANDOM_SEED)
-session_opts = onnxruntime.SessionOptions()
-session_opts.log_severity_level = 3  # error level, it a adjustable value.
-session_opts.inter_op_num_threads = 0  # Run different nodes with num_threads. Set 0 for auto.
-session_opts.intra_op_num_threads = 0  # Under the node, execute the operators with num_threads. Set 0 for auto.
-session_opts.enable_cpu_mem_arena = True  # True for execute speed; False for less memory usage.
-session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-session_opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-session_opts.add_session_config_entry("session.intra_op.allow_spinning", "1")
-session_opts.add_session_config_entry("session.inter_op.allow_spinning", "1")
-
-ort_session_A = onnxruntime.InferenceSession(onnx_model_A, sess_options=session_opts, providers=['CPUExecutionProvider'])
-model_type = ort_session_A._inputs_meta[0].type
-in_name_A = ort_session_A.get_inputs()
-out_name_A = ort_session_A.get_outputs()
-in_name_A0 = in_name_A[0].name
-in_name_A1 = in_name_A[1].name
-in_name_A2 = in_name_A[2].name
-out_name_A0 = out_name_A[0].name
-out_name_A1 = out_name_A[1].name
-out_name_A2 = out_name_A[2].name
-out_name_A3 = out_name_A[3].name
-out_name_A4 = out_name_A[4].name
-out_name_A5 = out_name_A[5].name
-out_name_A6 = out_name_A[6].name
-
-ort_session_C = onnxruntime.InferenceSession(onnx_model_C, sess_options=session_opts, providers=['CPUExecutionProvider'])
-in_name_C = ort_session_C.get_inputs()
-out_name_C = ort_session_C.get_outputs()
-in_name_C0 = in_name_C[0].name
-in_name_C1 = in_name_C[1].name
-out_name_C0 = out_name_C[0].name
-
-
 def get_input(reference_audio, ref_text, gen_text):                                                        # The target TTS.
     audio, sr = torchaudio.load(reference_audio)
     if sr != SAMPLE_RATE:
@@ -164,14 +129,20 @@ def get_input(reference_audio, ref_text, gen_text):                             
 
 def preprocess(audio, text_ids, max_duration):
     print("\n\nRun F5-TTS preprocess.")
-    noise, rope_cos, rope_sin, cat_mel_text, cat_mel_text_drop, qk_rotated_empty, ref_signal_len = ort_session_A.run(
-            [out_name_A0, out_name_A1, out_name_A2, out_name_A3, out_name_A4, out_name_A5, out_name_A6],
-            {
-                in_name_A0: audio,
-                in_name_A1: text_ids,
-                in_name_A2: max_duration
-            })
-    
+    # noise, rope_cos, rope_sin, cat_mel_text, cat_mel_text_drop, qk_rotated_empty, ref_signal_len = ort_session_A.run(
+    #         [out_name_A0, out_name_A1, out_name_A2, out_name_A3, out_name_A4, out_name_A5, out_name_A6],
+    #         {
+    #             in_name_A0: audio,
+    #             in_name_A1: text_ids,
+    #             in_name_A2: max_duration
+    #         })
+    with torch.inference_mode():
+      f5_model = load_model(F5_safetensors_path)
+      custom_stft = STFT_Process(model_type='stft_A', n_fft=NFFT, n_mels=N_MELS, hop_len=HOP_LENGTH, max_frames=MAX_SIGNAL_LENGTH, window_type=WINDOW_TYPE).eval()
+      f5_preprocess = F5Preprocess(f5_model, custom_stft)
+      noise, rope_cos, rope_sin, cat_mel_text, cat_mel_text_drop, qk_rotated_empty, ref_signal_len = f5_preprocess(torch.from_numpy(noise),
+                                                                                                                  torch.from_numpy(text_ids),
+                                                                                                                  torch.from_numpy(max_duration))
     t = torch.linspace(0, 1, 32 + 1, dtype=torch.float32)
     time_step = t + (-1.0) * (torch.cos(torch.pi * 0.5 * t) - 1 + t)
     delta_t = torch.diff(time_step)
@@ -346,13 +317,10 @@ class F5TTS(object):
         return self.outputs["denoised"]
 
 def decode(noise, ref_signal_len, audio_save_path = './gen.wav'):
-    
-    generated_signal = ort_session_C.run(
-            [out_name_C0],
-            {
-                in_name_C0: noise,
-                in_name_C1: ref_signal_len
-            })[0]
+    denoised = noise[:, ref_signal_len:, :].transpose(1, 2)
+    denoised = vocos.decode(denoised)
+    denoised = custom_istft(*denoised)
+    generated_signal = denoised * self.target_rms / torch.sqrt(torch.mean(torch.square(denoised)))
     # Save to audio
     audio_tensor = torch.tensor(generated_signal, dtype=torch.float32).squeeze(0)
     torchaudio.save(audio_save_path, audio_tensor, SAMPLE_RATE)
