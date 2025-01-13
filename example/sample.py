@@ -13,6 +13,7 @@ from tensorrt_llm._utils import str_dtype_to_torch, trt_dtype_to_torch
 from tensorrt_llm.logger import logger
 from tensorrt_llm.plugin.plugin import CustomAllReduceHelper
 from tensorrt_llm.runtime.session import Session, TensorInfo
+from .STFT_Procrss import STFT_Process
 
 import re
 import sys
@@ -319,7 +320,6 @@ class F5TTS(object):
 def decode(noise, ref_signal_len, audio_save_path = './gen.wav'):
     denoised = noise[:, ref_signal_len:, :].transpose(1, 2)
     denoised = vocos.decode(denoised)
-    denoised = custom_istft(*denoised)
     generated_signal = denoised * self.target_rms / torch.sqrt(torch.mean(torch.square(denoised)))
     # Save to audio
     audio_tensor = torch.tensor(generated_signal, dtype=torch.float32).squeeze(0)
